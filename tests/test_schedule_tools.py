@@ -300,3 +300,131 @@ async def test_get_schedule_handles_unpublished_schedule_with_helpful_message(
     assert result["schedule_version"] == "latest"
     assert "No published schedule found" in result["message"]
     assert result["session_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_schedule_returns_unavailable_when_no_schedules(
+    respx_mock: respx.MockRouter,
+    schedule_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = schedule_tool_context
+
+    respx_mock.get(f"{BASE_URL}/api/events/demo/schedules/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "next": None, "results": []})
+    )
+
+    result = await tools["pretalx_get_schedule"]()
+
+    assert result["available"] is False
+    assert result["event"] == "demo"
+    assert result["session_count"] == 0
+    assert "available" in result["message"].casefold() or "schedule" in result["message"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_get_schedule_with_include_raw_returns_raw(
+    respx_mock: respx.MockRouter,
+    schedule_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = schedule_tool_context
+
+    raw_schedule = {"version": "2026.1", "is_published": True}
+    raw_session = {
+        "code": "S1",
+        "start": "2026-09-12T09:00:00+00:00",
+        "end": "2026-09-12T10:00:00+00:00",
+        "room": {"name": {"en": "Room A"}},
+    }
+    respx_mock.get(f"{BASE_URL}/api/events/demo/schedules/").mock(
+        return_value=httpx.Response(
+            200, json={"count": 1, "next": None, "results": [raw_schedule]}
+        )
+    )
+    respx_mock.get(f"{BASE_URL}/api/events/demo/schedules/2026.1/talks/").mock(
+        return_value=httpx.Response(
+            200, json={"count": 1, "next": None, "results": [raw_session]}
+        )
+    )
+
+    result = await tools["pretalx_get_schedule"](include_raw=True)
+
+    assert result["available"] is True
+    assert "raw" in result
+    assert "schedules" in result["raw"]
+    assert "sessions" in result["raw"]
+
+
+@pytest.mark.asyncio
+async def test_list_schedule_sessions_returns_unavailable_when_no_schedules(
+    respx_mock: respx.MockRouter,
+    schedule_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = schedule_tool_context
+
+    respx_mock.get(f"{BASE_URL}/api/events/demo/schedules/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "next": None, "results": []})
+    )
+
+    result = await tools["pretalx_list_schedule_sessions"]()
+
+    assert result["available"] is False
+    assert result["total_count"] == 0
+    assert result["returned_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_schedule_sessions_with_include_raw_returns_raw(
+    respx_mock: respx.MockRouter,
+    schedule_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = schedule_tool_context
+
+    respx_mock.get(f"{BASE_URL}/api/events/demo/schedules/").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "next": None,
+                "results": [{"version": "v1", "is_published": True}],
+            },
+        )
+    )
+    respx_mock.get(f"{BASE_URL}/api/events/demo/schedules/v1/talks/").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "next": None,
+                "results": [
+                    {
+                        "code": "S1",
+                        "start": "2026-09-12T09:00:00+00:00",
+                        "end": "2026-09-12T10:00:00+00:00",
+                        "room": {"name": {"en": "Main"}},
+                    }
+                ],
+            },
+        )
+    )
+
+    result = await tools["pretalx_list_schedule_sessions"](include_raw=True)
+
+    assert result["available"] is True
+    assert "raw" in result
+
+
+@pytest.mark.asyncio
+async def test_find_schedule_conflicts_returns_unavailable_when_no_schedules(
+    respx_mock: respx.MockRouter,
+    schedule_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = schedule_tool_context
+
+    respx_mock.get(f"{BASE_URL}/api/events/demo/schedules/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "next": None, "results": []})
+    )
+
+    result = await tools["pretalx_find_schedule_conflicts"]()
+
+    assert result["available"] is False
+    assert result["counts"]["total_conflicts"] == 0

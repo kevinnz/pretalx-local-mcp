@@ -172,3 +172,85 @@ async def test_review_summary_returns_expected_structure(
 
     assert isinstance(result["submissions"], list)
     assert result["notes"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_submission_reviews_with_include_raw_returns_raw(
+    respx_mock: respx.MockRouter,
+    review_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = review_tool_context
+    raw_reviews = [{"id": "r1", "score": 4}]
+    respx_mock.get(f"{BASE_URL}/api/events/demo/submissions/SUB1/reviews/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": raw_reviews})
+    )
+
+    result = await tools["pretalx_get_submission_reviews"](
+        submission_code="SUB1", include_raw=True
+    )
+
+    assert result["available"] is True
+    assert "raw" in result
+    assert len(result["raw"]) == 1
+    assert result["raw"][0]["id"] == "r1"
+    assert result["raw"][0]["score"] == 4
+
+
+@pytest.mark.asyncio
+async def test_review_summary_degrades_when_all_review_endpoints_unavailable(
+    respx_mock: respx.MockRouter,
+    review_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = review_tool_context
+
+    respx_mock.get(f"{BASE_URL}/api/events/demo/submissions/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "next": None, "results": []})
+    )
+    respx_mock.get(f"{BASE_URL}/api/events/demo/reviews/").mock(
+        return_value=httpx.Response(403)
+    )
+    respx_mock.get(f"{BASE_URL}/api/events/demo/submissions/reviews/").mock(
+        return_value=httpx.Response(404)
+    )
+
+    result = await tools["pretalx_review_summary"]()
+
+    assert result["available"] is False
+    assert result["event"] == "demo"
+    assert "unavailable" in result["message"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_review_summary_falls_back_to_per_submission_reviews(
+    respx_mock: respx.MockRouter,
+    review_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = review_tool_context
+
+    respx_mock.get(f"{BASE_URL}/api/events/demo/submissions/").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "next": None,
+                "results": [{"code": "S1", "title": {"en": "Talk"}}],
+            },
+        )
+    )
+    # Both collection endpoints unavailable
+    respx_mock.get(f"{BASE_URL}/api/events/demo/reviews/").mock(return_value=httpx.Response(403))
+    respx_mock.get(f"{BASE_URL}/api/events/demo/submissions/reviews/").mock(
+        return_value=httpx.Response(403)
+    )
+    # Per-submission fallback succeeds
+    respx_mock.get(f"{BASE_URL}/api/events/demo/submissions/S1/reviews/").mock(
+        return_value=httpx.Response(
+            200, json={"count": 1, "next": None, "results": [{"id": "r1", "score": 5}]}
+        )
+    )
+
+    result = await tools["pretalx_review_summary"]()
+
+    assert result["available"] is True
+    assert result["source"] == "submission_reviews_fallback"
+    assert result["review_count"] == 1

@@ -55,3 +55,27 @@ def test_main_runs_server_over_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["server_settings"] is settings
     assert isinstance(calls["server_client"], FakeClient)
     assert calls["closed"] is True
+
+
+def test_main_raises_system_exit_on_invalid_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError as PydanticValidationError
+
+    def bad_get_settings() -> Settings:
+        raise PydanticValidationError.from_exception_data(
+            title="Settings",
+            input_type="python",
+            line_errors=[
+                {
+                    "type": "missing",
+                    "loc": ("base_url",),
+                    "msg": "Field required",
+                    "input": {},
+                    "url": "https://errors.pydantic.dev/2/v/missing",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(server_module, "get_settings", bad_get_settings)
+
+    with pytest.raises(SystemExit, match="Invalid PRETALX_\\* configuration"):
+        server_module.main()

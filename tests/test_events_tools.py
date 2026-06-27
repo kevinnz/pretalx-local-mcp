@@ -142,3 +142,71 @@ async def test_get_event_raises_clear_error_without_event_or_default() -> None:
         await registry.tools["pretalx_get_event"]()
 
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_list_events_with_include_raw_returns_raw_events(
+    respx_mock: respx.MockRouter,
+    event_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = event_tool_context
+    raw_data = [{"slug": "raw-2026", "name": {"en": "Raw Event"}}]
+    respx_mock.get(f"{BASE_URL}/api/events/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": raw_data})
+    )
+
+    result = await tools["pretalx_list_events"](include_raw=True)
+
+    assert "raw_events" in result
+    assert result["raw_events"] == raw_data
+
+
+@pytest.mark.asyncio
+async def test_get_event_with_include_raw_returns_raw_event(
+    respx_mock: respx.MockRouter,
+    event_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = event_tool_context
+    raw_data = {"slug": "demo-2026", "name": {"en": "Demo"}, "extra_field": "value"}
+    respx_mock.get(f"{BASE_URL}/api/events/demo-2026/").mock(
+        return_value=httpx.Response(200, json=raw_data)
+    )
+
+    result = await tools["pretalx_get_event"](event="demo-2026", include_raw=True)
+
+    assert "raw_event" in result
+    assert result["raw_event"]["extra_field"] == "value"
+
+
+@pytest.mark.asyncio
+async def test_get_event_raises_on_unexpected_non_mapping_payload(
+    respx_mock: respx.MockRouter,
+    event_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = event_tool_context
+    respx_mock.get(f"{BASE_URL}/api/events/demo-2026/").mock(
+        return_value=httpx.Response(200, json=[{"slug": "demo-2026"}])
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected payload"):
+        await tools["pretalx_get_event"](event="demo-2026")
+
+
+@pytest.mark.asyncio
+async def test_list_events_raises_on_zero_limit(
+    event_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = event_tool_context
+
+    with pytest.raises(RuntimeError, match="limit must be at least 1"):
+        await tools["pretalx_list_events"](limit=0)
+
+
+@pytest.mark.asyncio
+async def test_list_events_raises_on_negative_limit(
+    event_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = event_tool_context
+
+    with pytest.raises(RuntimeError, match="limit must be at least 1"):
+        await tools["pretalx_list_events"](limit=-5)

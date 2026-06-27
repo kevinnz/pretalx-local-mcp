@@ -222,7 +222,24 @@ async def _load_schedule_snapshot(client: PretalxClient, event_slug: str) -> Sch
         )
 
     version = _clean_text(selected.get("version")) or "latest"
-    sessions_raw, endpoint_used = await _fetch_schedule_items(client, event_slug, version)
+    try:
+        sessions_raw, endpoint_used = await _fetch_schedule_items(client, event_slug, version)
+    except PretalxClientError as exc:
+        if "not found" in str(exc).casefold():
+            return ScheduleSnapshot(
+                event=event_slug,
+                schedule=None,
+                schedules_raw=schedules,
+                sessions=[],
+                sessions_raw=[],
+                endpoint_used=None,
+                message=(
+                    f"Schedule version '{version}' exists but its sessions are not yet "
+                    "accessible (talks/slots endpoints returned 404). "
+                    "The schedule may not be published yet."
+                ),
+            )
+        raise
     sessions = [_normalise_session(item) for item in sessions_raw]
 
     return ScheduleSnapshot(

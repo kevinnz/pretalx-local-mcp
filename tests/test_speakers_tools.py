@@ -186,3 +186,126 @@ async def test_search_speakers_matches_name_bio_and_submission_title(
     assert result["truncated"] is False
     assert result["speakers"][0]["code"] == expected_code
     assert "email" not in result["speakers"][0]
+
+
+@pytest.mark.asyncio
+async def test_list_speakers_with_include_raw_returns_raw_list(
+    respx_mock: respx.MockRouter,
+    speaker_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = speaker_tool_context
+    raw = [{"code": "SP1", "name": "Ada"}]
+    respx_mock.get(f"{BASE_URL}/api/events/demo/speakers/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": raw})
+    )
+
+    result = await tools["pretalx_list_speakers"](include_raw=True)
+
+    assert "raw" in result
+    assert result["raw"] == raw
+
+
+@pytest.mark.asyncio
+async def test_get_speaker_with_include_raw_returns_raw_dict(
+    respx_mock: respx.MockRouter,
+    speaker_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = speaker_tool_context
+    raw = {"code": "SP1", "name": "Ada", "extra": "data"}
+    respx_mock.get(f"{BASE_URL}/api/events/demo/speakers/SP1/").mock(
+        return_value=httpx.Response(200, json=raw)
+    )
+
+    result = await tools["pretalx_get_speaker"](speaker="SP1", include_raw=True)
+
+    assert "raw" in result
+    assert result["raw"]["extra"] == "data"
+
+
+@pytest.mark.asyncio
+async def test_search_speakers_with_include_raw_returns_raw_list(
+    respx_mock: respx.MockRouter,
+    speaker_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = speaker_tool_context
+    raw = [{"code": "SP1", "name": "Ada Lovelace"}]
+    respx_mock.get(f"{BASE_URL}/api/events/demo/speakers/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": raw})
+    )
+
+    result = await tools["pretalx_search_speakers"](query="Ada", include_raw=True)
+
+    assert "raw" in result
+
+
+@pytest.mark.asyncio
+async def test_list_speakers_raises_without_event_and_no_default() -> None:
+    from pretalx_mcp.tools.speakers import register_speaker_tools
+    from tests._tooling import ToolRegistry, make_settings
+
+    settings = make_settings(default_event=None)
+    registry = ToolRegistry()
+    client = PretalxClient(settings)
+    register_speaker_tools(registry, client, settings)
+
+    with pytest.raises(ValueError, match="Event slug is required"):
+        await registry.tools["pretalx_list_speakers"]()
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_speaker_raises_without_event_and_no_default() -> None:
+    from pretalx_mcp.tools.speakers import register_speaker_tools
+    from tests._tooling import ToolRegistry, make_settings
+
+    settings = make_settings(default_event=None)
+    registry = ToolRegistry()
+    client = PretalxClient(settings)
+    register_speaker_tools(registry, client, settings)
+
+    with pytest.raises(ValueError, match="Event slug is required"):
+        await registry.tools["pretalx_get_speaker"](speaker="SP1")
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_list_speakers_raises_on_zero_limit(
+    speaker_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = speaker_tool_context
+
+    with pytest.raises(ValueError, match="limit must be at least 1"):
+        await tools["pretalx_list_speakers"](limit=0)
+
+
+@pytest.mark.asyncio
+async def test_get_speaker_raises_on_unexpected_list_payload(
+    respx_mock: respx.MockRouter,
+    speaker_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = speaker_tool_context
+    respx_mock.get(f"{BASE_URL}/api/events/demo/speakers/SP1/").mock(
+        return_value=httpx.Response(200, json=[{"code": "SP1"}])
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected speaker payload"):
+        await tools["pretalx_get_speaker"](speaker="SP1")
+
+
+@pytest.mark.asyncio
+async def test_merge_speakers_deduplicates_by_code(
+    respx_mock: respx.MockRouter,
+    speaker_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    """Speaker appearing in server-side and local pool is deduplicated."""
+    tools, _ = speaker_tool_context
+    item = {"code": "SP1", "name": "Ada Lovelace"}
+    respx_mock.get(f"{BASE_URL}/api/events/demo/speakers/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": [item]})
+    )
+
+    result = await tools["pretalx_search_speakers"](query="Ada")
+
+    assert result["returned_count"] == 1

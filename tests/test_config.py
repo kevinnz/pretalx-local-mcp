@@ -47,3 +47,32 @@ def test_settings_requires_base_url() -> None:
 def test_settings_model_has_no_network_bind_fields() -> None:
     forbidden = {"host", "port", "bind", "sse", "websocket"}
     assert forbidden.isdisjoint(Settings.model_fields)
+
+
+def test_settings_rejects_empty_base_url() -> None:
+    with pytest.raises(ValidationError, match="PRETALX_BASE_URL must be a non-empty URL"):
+        Settings(base_url="   ", _env_file=None)
+
+
+def test_settings_rejects_url_without_scheme_or_host() -> None:
+    with pytest.raises(
+        ValidationError, match="PRETALX_BASE_URL must include scheme and host"
+    ):
+        Settings(base_url="pretalx.com", _env_file=None)
+
+
+def test_get_settings_returns_settings_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    import pretalx_mcp.config as config_module
+
+    monkeypatch.setenv("PRETALX_BASE_URL", "https://pretalx.com")
+    # Clear lru_cache so env var is picked up
+    config_module.get_settings.cache_clear()
+    try:
+        result = config_module.get_settings()
+        assert isinstance(result, Settings)
+        assert result.base_url == "https://pretalx.com"
+    finally:
+        config_module.get_settings.cache_clear()
+        importlib.reload(config_module)

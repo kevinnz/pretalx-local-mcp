@@ -209,3 +209,87 @@ def test_multilingual_field_resolution_helper() -> None:
     assert client.resolve_multilingual_field(value, preferred="fr-FR") == "Bonjour"
     assert client.resolve_multilingual_field(value, preferred="it-IT") == "Hello"
     assert client.resolve_multilingual_field("  plain value  ") == "plain value"
+
+
+@pytest.mark.asyncio
+async def test_get_paginated_raises_for_max_pages_zero() -> None:
+    async with PretalxClient(make_settings()) as client:
+        with pytest.raises(ValueError, match="max_pages must be at least 1"):
+            await client.get_paginated("/api/events/", max_pages=0)
+
+
+@pytest.mark.asyncio
+async def test_get_paginated_raises_for_max_results_zero() -> None:
+    async with PretalxClient(make_settings()) as client:
+        with pytest.raises(ValueError, match="max_results must be at least 1"):
+            await client.get_paginated("/api/events/", max_results=0)
+
+
+@pytest.mark.asyncio
+async def test_get_returns_error_for_non_dict_non_list_payload(
+    respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/events/").mock(
+        return_value=httpx.Response(200, text='"just-a-string"')
+    )
+
+    async with PretalxClient(make_settings()) as client:
+        with pytest.raises(PretalxClientError, match="unexpected JSON payload"):
+            await client.get("/api/events/")
+
+
+@pytest.mark.asyncio
+async def test_get_paginated_handles_plain_list_response(
+    respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/events/").mock(
+        return_value=httpx.Response(200, json=[{"slug": "e1"}, {"slug": "e2"}])
+    )
+
+    async with PretalxClient(make_settings()) as client:
+        results = await client.get_paginated("/api/events/")
+
+    assert [r["slug"] for r in results] == ["e1", "e2"]
+    assert client.last_pagination.total_count == 2
+    assert client.last_pagination.truncated is False
+
+
+@pytest.mark.asyncio
+async def test_get_paginated_wraps_single_dict_when_no_results_key(
+    respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/events/demo/").mock(
+        return_value=httpx.Response(200, json={"slug": "demo", "name": "Demo"})
+    )
+
+    async with PretalxClient(make_settings()) as client:
+        results = await client.get_paginated("/api/events/demo/")
+
+    assert results == [{"slug": "demo", "name": "Demo"}]
+    assert client.last_pagination.total_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generic_http_error_maps_to_friendly_message(
+    respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/events/").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+
+    async with PretalxClient(make_settings()) as client:
+        with pytest.raises(PretalxClientError, match="Failed to contact pretalx API"):
+            await client.get("/api/events/")
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_response_raises_client_error(
+    respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/events/").mock(
+        return_value=httpx.Response(200, content=b"not json {{{")
+    )
+
+    async with PretalxClient(make_settings()) as client:
+        with pytest.raises(PretalxClientError, match="invalid JSON"):
+            await client.get("/api/events/")

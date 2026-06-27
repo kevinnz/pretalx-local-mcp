@@ -253,3 +253,53 @@ async def test_summarise_submissions_groupings(
 
     groups = {item["key"]: item["count"] for item in result["groups"]}
     assert groups == expected_counts
+
+
+@pytest.mark.asyncio
+async def test_list_submissions_raises_without_event_and_no_default() -> None:
+    settings = make_settings(default_event=None)
+    registry = ToolRegistry()
+    client = PretalxClient(settings)
+    register_submission_tools(registry, client, settings)
+
+    with pytest.raises(RuntimeError, match="Event slug is required"):
+        await registry.tools["pretalx_list_submissions"]()
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_submission_raises_on_empty_code(
+    submission_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = submission_tool_context
+
+    with pytest.raises(RuntimeError, match="submission_code"):
+        await tools["pretalx_get_submission"](submission_code="  ")
+
+
+@pytest.mark.asyncio
+async def test_summarise_submissions_raises_on_invalid_group_by(
+    submission_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = submission_tool_context
+
+    with pytest.raises(RuntimeError, match="group_by must be one of"):
+        await tools["pretalx_summarise_submissions"](group_by="invalid_field")
+
+
+@pytest.mark.asyncio
+async def test_list_submissions_with_include_raw_returns_raw(
+    respx_mock: respx.MockRouter,
+    submission_tool_context: tuple[dict[str, object], PretalxClient],
+) -> None:
+    tools, _ = submission_tool_context
+    raw = [{"code": "S1", "state": "accepted"}]
+    respx_mock.get(f"{BASE_URL}/api/events/demo/submissions/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": raw})
+    )
+
+    result = await tools["pretalx_list_submissions"](include_raw=True)
+
+    assert "raw_submissions" in result
+    assert result["raw_submissions"] == raw
